@@ -1,6 +1,8 @@
 *.webm
 *.wav
 
+# Cached username (semi-secret)
+username.txt
 
 # From github:
  
