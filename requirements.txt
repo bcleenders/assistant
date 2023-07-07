@@ -6,7 +6,14 @@ graphviz==0.20.1
 ipywebrtc==0.6.0
 matplotlib==3.7.1
 sentencepiece==0.1.99
-torchaudio==2.0.1
+torchaudio==2.0.2
+torch==2.0.1
 tqdm==4.65.0
 
 sentence-transformers-2.2.2
+
+# Required for pytorch-asr-demo
+librosa==0.10.0
+pyaudio==0.2.13  # On OSX, this requires `brew install portaudio`, on linux `sudo apt install python3-pyaudio`
+fairseq==2.0.1
+
