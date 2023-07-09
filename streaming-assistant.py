@@ -147,9 +147,10 @@ def setup_asr():
     model_size = "base.en"
     whisper_model = WhisperModel(model_size, device="cpu", compute_type="int8")
 
-    silero_model, utils = torch.hub.load(repo_or_dir='snakers4/silero-vad',
+    silero_model, utils = torch.hub.load(
+                              repo_or_dir='snakers4/silero-vad',
                               model='silero_vad',
-                              force_reload=True)
+                              force_reload=False)
 
     return (whisper_model, silero_model)
 
