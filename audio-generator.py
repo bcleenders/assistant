@@ -5,15 +5,16 @@ from faster_whisper import WhisperModel
 import queue
 import numpy as np
 import torch
+import datetime as dt
+
+SAMPLE_RATE = 16000
+CHUNK_SIZE = int(SAMPLE_RATE / 10)
+DEVICE = None
 
 class MicrophoneStream:
     """Opens a recording stream as a generator yielding the audio chunks."""
 
-    def __init__(self, device=None, rate=16000, chunk=1600):
-        self._rate = rate
-        self._chunk = chunk
-        self._device = device
-
+    def __init__(self):
         # Create a thread-safe buffer of audio data
         self._buff = queue.Queue()
         self.closed = True
@@ -26,10 +27,10 @@ class MicrophoneStream:
             # The API currently only supports 1-channel (mono) audio
             # https://goo.gl/z757pE
             channels=1,
-            rate=self._rate,
+            rate=SAMPLE_RATE,
             input=True,
-            frames_per_buffer=self._chunk,
-            input_device_index=self._device,
+            frames_per_buffer=CHUNK_SIZE,
+            input_device_index=DEVICE,
             # Run the audio stream asynchronously to fill the buffer object.
             # This is necessary so that the input device's buffer doesn't
             # overflow while the calling thread makes network requests, etc.
@@ -76,7 +77,7 @@ class MicrophoneStream:
 
             ans = np.frombuffer(b"".join(data), dtype=np.float32)
             # yield uniform-sized chunks
-            ans = np.split(ans, np.shape(ans)[0] / self._chunk)
+            ans = np.split(ans, np.shape(ans)[0] / CHUNK_SIZE)
             for chunk in ans:
                 yield chunk
 
@@ -88,7 +89,8 @@ def get_microphone_chunks(
     max_to_visualize=100,
 ):
     # Store speech chunks
-    cumulated = []
+    # cumulated = []
+    cumulated = np.ndarray([0])
     # Store a few chunks back (up to $precumulate chunks)
     precumulated = deque(maxlen=precumulate)
     # TODO: There may be a small gap between words
@@ -96,12 +98,11 @@ def get_microphone_chunks(
 
     with MicrophoneStream() as stream:
         audio_generator = stream.generator()
-        chunk_length = stream._chunk
-        waveform = torch.zeros(max_to_visualize * chunk_length)
+        waveform = torch.zeros(max_to_visualize * CHUNK_SIZE)
 
         for chunk in audio_generator:
             # Is speech?
-            speech_confidence = vad_model(torch.from_numpy(chunk), 16000).item()
+            speech_confidence = vad_model(torch.from_numpy(chunk), SAMPLE_RATE).item()
 
             # Print speech confidence with a histogram-like visualisation
             print(f'{speech_confidence:.3f} - [{("*" * int(speech_confidence * 50)):50s}]')
@@ -109,33 +110,29 @@ def get_microphone_chunks(
             is_speech = speech_confidence > 0.5
 
             # Are we seeing speech now?
-            if is_speech or cumulated:
-                cumulated.append(torch.from_numpy(chunk))
+            if is_speech or cumulated.size > 0:
+                # cumulated.append(torch.from_numpy(chunk))
+                cumulated = np.append(cumulated, chunk)
             else:
                 # This is pre-speech, so re-cumulate it into our fifo queue
-                precumulated.append(torch.from_numpy(chunk))
+                precumulated.append(chunk)
 
-            if (not is_speech and len(cumulated) >= min_to_cumulate) or (
-                len(cumulated) > max_to_cumulate
+            # print(f'cumulated.size: {cumulated.size}, is_speech: {is_speech}, dt={dt.datetime.now().strftime("%H:%M:%S")}')
+            if (not is_speech and cumulated.size / CHUNK_SIZE >= min_to_cumulate) or (
+                cumulated.size / CHUNK_SIZE > max_to_cumulate
             ):
-                waveform = torch.cat(list(precumulated) + cumulated, -1)
-                yield waveform #(waveform * stream._rate, stream._rate)
-                cumulated = []
+                waveform = np.append(np.array(precumulated), cumulated)
+                yield waveform
+                cumulated = np.ndarray([0])
                 precumulated = deque(maxlen=precumulate)
 
 def transcribe(waveform, stt_model):
-    print(f"transcribe: {waveform.shape}")
-    
     segments, info = stt_model.transcribe(waveform, beam_size=5)
     s = "".join([s.text for s in segments]).strip()
-    print(f"completed transcribing, result: {s}")
     return s
 
 def get_microphone_transcription(stt_model, vad_model):
     for waveform in get_microphone_chunks(vad_model):
-        # waveform = torchaudio.transforms.Resample(
-        #     orig_freq=sample_rate, new_freq=16000
-        # )(waveform.reshape(1, -1))
         transcription = transcribe(waveform, stt_model)
         yield transcription
 
@@ -152,18 +149,13 @@ def setup_asr():
 def main():
     # logger = logging.getLogger(__name__)
     # logger.setLevel(logging.INFO)
-    # task, generator, models, sp, tgt_dict = setup_asr(args, logger)
     (stt_model, vad_model) = setup_asr()
 
     print("READY!")
     # for transcription in get_microphone_transcription(args, task, generator, models, sp, tgt_dict):
     for transcription in get_microphone_transcription(stt_model, vad_model):
-        if 1 == 2:
             print(
                 transcription
-                # "{}: {}".format(
-                #     dt.datetime.now().strftime("%H:%M:%S"), transcription[0][0]
-                # )
             )
 
 if __name__ == "__main__":
