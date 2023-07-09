@@ -74,24 +74,11 @@ class MicrophoneStream:
                 except queue.Empty:
                     break
 
-            # for chunk in data:
-            #     yield chunk
             ans = np.frombuffer(b"".join(data), dtype=np.float32)
-            # ans = np.fromstring(b"".join(data), dtype=np.float32)
             # yield uniform-sized chunks
             ans = np.split(ans, np.shape(ans)[0] / self._chunk)
-            # Resample the audio
             for chunk in ans:
                 yield chunk
-                # yield librosa.core.resample(chunk, self._rate, 16000)
-
-def int2float(sound):
-    abs_max = np.abs(sound).max()
-    sound = sound.astype('float32')
-    if abs_max > 0:
-        sound *= 1/32768
-    sound = sound.squeeze()  # depends on the use case
-    return sound
 
 def get_microphone_chunks(
     vad_model,
@@ -100,7 +87,12 @@ def get_microphone_chunks(
     precumulate=5,
     max_to_visualize=100,
 ):
+    # Store speech chunks
+    cumulated = []
+    # Store a few chunks back (up to $precumulate chunks)
     precumulated = deque(maxlen=precumulate)
+    # TODO: There may be a small gap between words
+    # consecutive_non_speech_blocks = 0
 
     with MicrophoneStream() as stream:
         audio_generator = stream.generator()
@@ -109,35 +101,38 @@ def get_microphone_chunks(
 
         for chunk in audio_generator:
             # Is speech?
-            # audio_chunk = stream.read(num_samples)
-            # audio_int16 = np.frombuffer(chunk, np.int16);
-            # audio_float32 = int2float(audio_int16)
-            print(chunk.shape)
             speech_confidence = vad_model(torch.from_numpy(chunk), 16000).item()
 
             # Print speech confidence with a histogram-like visualisation
             print(f'{speech_confidence:.3f} - [{("*" * int(speech_confidence * 50)):50s}]')
-            yield [1, 1]
 
-            # Cumulate speech
-            # if is_speech or cumulated:
-            #     cumulated.append(chunk)
-            # else:
-            #     precumulated.append(chunk)
+            is_speech = speech_confidence > 0.5
 
-            # if (not is_speech and len(cumulated) >= min_to_cumulate) or (
-            #     len(cumulated) > max_to_cumulate
-            # ):
-            #     waveform = torch.cat(list(precumulated) + cumulated, -1)
-            #     yield (waveform * stream._rate, stream._rate)
-            #     cumulated = []
-            #     precumulated = deque(maxlen=precumulate)
+            # Are we seeing speech now?
+            if is_speech or cumulated:
+                cumulated.append(torch.from_numpy(chunk))
+            else:
+                # This is pre-speech, so re-cumulate it into our fifo queue
+                precumulated.append(torch.from_numpy(chunk))
 
-def transcribe(waveform, model):
-    return "foo"
+            if (not is_speech and len(cumulated) >= min_to_cumulate) or (
+                len(cumulated) > max_to_cumulate
+            ):
+                waveform = torch.cat(list(precumulated) + cumulated, -1)
+                yield waveform #(waveform * stream._rate, stream._rate)
+                cumulated = []
+                precumulated = deque(maxlen=precumulate)
+
+def transcribe(waveform, stt_model):
+    print(f"transcribe: {waveform.shape}")
+    
+    segments, info = stt_model.transcribe(waveform, beam_size=5)
+    s = "".join([s.text for s in segments]).strip()
+    print(f"completed transcribing, result: {s}")
+    return s
 
 def get_microphone_transcription(stt_model, vad_model):
-    for (waveform, sample_rate) in get_microphone_chunks(vad_model):
+    for waveform in get_microphone_chunks(vad_model):
         # waveform = torchaudio.transforms.Resample(
         #     orig_freq=sample_rate, new_freq=16000
         # )(waveform.reshape(1, -1))
