@@ -6,6 +6,7 @@ import queue
 import numpy as np
 import torch
 import datetime as dt
+import time
 
 SAMPLE_RATE = 16000
 CHUNK_SIZE = int(SAMPLE_RATE / 10)
@@ -135,8 +136,8 @@ def get_microphone_chunks(
 
 def transcribe(waveform, stt_model):
     segments, info = stt_model.transcribe(waveform, beam_size=5)
-    s = "".join([s.text for s in segments]).strip()
-    return s
+    s = "".join([s.text for s in segments])
+    return s.strip()
 
 def get_microphone_transcription(audio_chunk_stream, stt_model):
     for waveform in audio_chunk_stream:
@@ -243,6 +244,11 @@ def get_hue_commands(hue):
             'action': createOffSwitch(target)
         })
 
+    commands.append({
+        'phrase': 'Stop listening',
+        'action': None
+        })
+
     return commands
 
 def get_command_stream(transcription_stream, commands):
@@ -278,7 +284,6 @@ def main():
     hue = setup_hue()
     hue_commands = get_hue_commands(hue)
 
-
     # Audio stream
     microphone_stream = MicrophoneStream()
     # Audio stream, split into chunks representing sentences
@@ -291,14 +296,18 @@ def main():
     print("READY!")
 
     for (transcription, cos_sim, cmd_phrase, cmd_action) in command_stream:
-        print(f"I think you said:       {transcription}")
+        print(f"I think you said:      {transcription}")
         print(f"  which is similar to: {cmd_phrase}")
         print(f"  with likelyhood:     {cos_sim} (between -1 and 1)")
         if cos_sim > 0.75:
+            if cmd_phrase == 'Stop listening':
+                return
             cmd_action()
             print("  which is a good match, so I will executed it.")
         else:
             print("  which is not super similar, so I will ignore this. It is likely not a command.")
+
+        time.sleep(1)
 
 if __name__ == "__main__":
     main()
